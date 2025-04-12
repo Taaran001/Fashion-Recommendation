@@ -12,6 +12,10 @@ from flask_mail import Mail, Message
 import hmac
 import hashlib
 import mediapipe as mp
+from base64 import b64encode
+import requests
+from requests_toolbelt.multipart.encoder import MultipartEncoder
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -62,43 +66,71 @@ clothing_recommendations = {
         "hair_type": {
             "Long Hair": [
                 {"id": 1, "name": "Slim Fit Shirt", "price": 29.99,
-                 "image": "/static/images/male/SlimFitShirt1.jpg",
-                 "CLOTH_PRO":"",
+                 "image": "https://m.media-amazon.com/images/I/61-8Lx8QpZL.AC_UY1100.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/SlimFitShirt1.jpg",
                  "material": "Cotton", "size": "M"},
                 {"id": 2, "name": "Skinny Jeans", "price": 49.99,
-                 "image": "/static/images/male/SkinnyJeans1.jpg",
-                 "CLOTH_PRO":"",
+                 "image": "https://m.media-amazon.com/images/I/71HnHYXk5VL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/SkinnyJeans1.jpg",
                  "material": "Denim", "size": "32"}
             ],
             "Short Hair": [
                 {"id": 3, "name": "Polo Shirt", "price": 24.99,
-                 "image": "/static/images/male/PoloShirt1.jpg",
-                 "CLOTH_PRO":"",
+                 "image": "https://m.media-amazon.com/images/I/71+nTJ8M8VL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/PoloShirt1.jpg",
                  "material": "Polyester", "size": "L"},
                 {"id": 4, "name": "Cargo Pants", "price": 39.99,
-                 "image": "/static/images/male/CargoPants1.jpg",
-                 "CLOTH_PRO":"",
+                 "image": "https://m.media-amazon.com/images/I/71S8U9VzLTL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/CargoPants1.jpg",
                  "material": "Cotton Blend", "size": "34"}
             ]
         },
-        # Update face_shape and body_shape sections similarly
+        "face_shape": {
+            "Oval Face": [
+                {"id": 5, "name": "V-Neck Sweater", "price": 45.99,
+                 "image": "https://m.media-amazon.com/images/I/71Q4hXUzHhL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/V-NeckSweater1.jpg",
+                 "material": "Wool", "size": "M"},
+                {"id": 6, "name": "Tailored Blazer", "price": 79.99,
+                 "image": "https://m.media-amazon.com/images/I/71+nTJ8M8VL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/TailoredBlazer1.jpg",
+                 "material": "Wool Blend", "size": "L"}
+            ],
+            "Round Face": [
+                {"id": 7, "name": "Denim Jacket", "price": 59.99,
+                 "image": "https://m.media-amazon.com/images/I/71+nTJ8M8VL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/DenimJacket1.jpg",
+                 "material": "Denim", "size": "L"},
+                {"id": 8, "name": "Crew Neck T-Shirt", "price": 19.99,
+                 "image": "https://m.media-amazon.com/images/I/71+nTJ8M8VL.AC_UL1500.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/male/CrewNeckSweater1.jpg",
+                 "material": "Cotton", "size": "M"}
+            ]
+        }
     },
     "female": {
         "hair_type": {
             "Long Hair": [
-                {"id": 17, "name": "Floral Dress", "price": 39.99,
-                 "image": "/static/images/female/FloralDress1.jpg",
-                 "CLOTH_PRO":"",
-                 "material": "Polyester", "size": "S"},
-                {"id": 18, "name": "Maxi Skirt", "price": 29.99,
-                 "image": "/static/images/female/MaxiSkirt1.jpg",
-                 "CLOTH_PRO":"",
-                 "material": "Cotton", "size": "M"}
+                {"id": 11, "name": "Floral Dress", "price": 49.99,
+                 "image": "https://m.media-amazon.com/images/I/71yCL+qnRhL._AC_UL1500_.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/female/Floral Dress.jpg",
+                 "material": "Polyester", "size": "M"},
+                {"id": 12, "name": "Maxi Skirt", "price": 39.99,
+                 "image": "https://m.media-amazon.com/images/I/61X3ftPBQeL._AC_UL1500_.jpg",
+                 "CLOTH_PRO": "/static/cloth_pro/female/Maxi Skirt.jpg",
+                 "material": "Cotton", "size": "S"}
             ],
-            # Update other sections similarly
+            # ... rest of the female clothing items ...
         }
     }
 }
+
+# Create all_products list
+all_products = []
+for gender in clothing_recommendations.values():
+    for category in gender.values():
+        for items in category.values():
+            all_products.extend(items)
 
 # Utility Functions
 # --------------------------------------
@@ -229,6 +261,39 @@ def signup():
         if existing_user:
             flash('Username already exists!')
         else:
+        cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
+        user = cursor.fetchone()
+
+        if user and check_password_hash(user['password'], password):
+            session['logged_in'] = True
+            session['username'] = username
+            session['user_id'] = user['id']
+            return redirect(url_for('gender_selection'))
+        else:
+            flash('Invalid username or password.')
+
+    return render_template('login.html', title="Login", action_url=url_for('login'), 
+                         button_text="Login", signup=False, show_confirm=False, 
+                         signup_url=url_for('signup'))
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+
+        if password != confirm_password:
+            flash('Passwords do not match!')
+            return redirect(url_for('signup'))
+
+        cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
+        cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
+        existing_user = cursor.fetchone()
+
+        if existing_user:
+            flash('Username already exists!')
+        else:
             hashed_password = generate_password_hash(password)
             cursor.execute('INSERT INTO users (username, password) VALUES (%s, %s)', 
                          (username, hashed_password))
@@ -324,7 +389,7 @@ def gender_selection():
 
 @app.route('/home', methods=['GET', 'POST'])
 def home():
-    if 'logged_in' not in session or not session['logged_in']:
+    if 'logged_in' not in session:
         flash('Please log in to access the home page.')
         return redirect(url_for('login'))
 
@@ -342,6 +407,9 @@ def home():
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
+            
+            # Store the uploaded image path in session
+            session['user_uploaded_image'] = filepath
 
             image = cv2.imread(filepath)
             if image is None:
@@ -351,13 +419,15 @@ def home():
             hair_type = analyze_hair(image)
             face_shape = analyze_face(image)
             body_shape = analyze_body(image)
-            print(f"Analysis Results - Hair: {hair_type}, Face: {face_shape}, Body: {body_shape}")
+            
             session['hair_type'] = hair_type
             session['face_shape'] = face_shape
             session['body_shape'] = body_shape
 
-            return render_template('index.html', hair_type=hair_type, 
-                                face_shape=face_shape, body_shape=body_shape)
+            return render_template('index.html', 
+                                hair_type=hair_type, 
+                                face_shape=face_shape, 
+                                body_shape=body_shape)
 
     return render_template('index.html')
 
@@ -498,7 +568,11 @@ def add_to_wishlist(product_id):
 # --------------------------------------
 @app.route('/add_to_cart/<int:product_id>', methods=['POST'])
 def add_to_cart(product_id):
+    if 'cart' not in session:
+        session['cart'] = []
+    
     product = None
+    # Find the product in recommendations
     for gender in clothing_recommendations.values():
         for category in gender.values():
             for items in category.values():
@@ -519,24 +593,33 @@ def add_to_cart(product_id):
             'name': product['name'],
             'price': float(product['price']),
             'image': product['image'],
-            'quantity': 1  
+            'quantity': 1
         }
 
-        if 'cart' not in session:
-            session['cart'] = []
-
+        # Check if item already exists in cart
+        item_exists = False
         for item in session['cart']:
             if item['id'] == product_id:
                 item['quantity'] += 1
+                item_exists = True
                 break
-        else:
+
+        if not item_exists:
             session['cart'].append(cart_item)
 
-        flash(f"{product['name']} has been added to your cart.")
-        return redirect(url_for('product_page', product_id=product_id))
-    else:
-        flash("Product not found.")
-        return redirect(url_for('recommendations'))
+        session.modified = True
+
+        return jsonify({
+            'success': True,
+            'message': f"{product['name']} has been added to your cart",
+            'cart_count': len(session['cart']),
+            'cart_total': sum(item['price'] * item['quantity'] for item in session['cart'])
+        })
+    
+    return jsonify({
+        'success': False,
+        'message': "Product not found"
+    }), 404
 
 @app.route('/update_quantity/<int:product_id>', methods=['POST'])
 def update_quantity(product_id):
@@ -585,6 +668,7 @@ def clear_cart():
 @app.route('/buy_now/<int:product_id>', methods=['POST'])
 def buy_now(product_id):
     product = None
+    # Find the product in recommendations
     for gender in clothing_recommendations.values():
         for category in gender.values():
             for items in category.values():
@@ -607,10 +691,10 @@ def buy_now(product_id):
             'image': product['image'],
             'quantity': 1
         }
-        return redirect(url_for('payment'))
-    else:
-        flash("Product not found.")
-        return redirect(url_for('product_page', product_id=product_id))
+        return redirect(url_for('checkout', product_id=product_id))
+    
+    flash("Product not found.")
+    return redirect(url_for('recommendations'))
 
 @app.route('/address', methods=['GET'])
 def address():
@@ -774,21 +858,104 @@ def order_success():
 
 @app.route('/try-on', methods=['POST'])
 def try_on():
-    if 'user_image' not in request.files or 'garment_image' not in request.form:
-        return jsonify({'success': False, 'message': 'Missing required files'})
-    
-    user_image = request.files['user_image']
-    garment_image = request.form['garment_image']
-    
+    API_KEY = 'cm9ctn5650008kw04u5slrfqd'
+    API_URL = 'https://prod.api.market/api/v1/ailabtools/try-on-clothes-pro/portrait/editing/try-on-clothes-pro'
+
+    print("Try-on request received")
+    print("Files:", request.files)
+    print("Form data:", request.form)
+
     try:
-        # Here you would integrate with your virtual try-on model
-        # For now, we'll return a mock response
-        return jsonify({
-            'success': True,
-            'result_image': garment_image  # In real implementation, this would be the processed image
-        })
+        if 'user_image' not in request.files:
+            print("No user_image in request.files")
+            return jsonify({
+                'success': False,
+                'message': 'Please upload your photo'
+            })
+
+        user_image = request.files['user_image']
+        print(f"User image received: {user_image.filename}")
+        
+        if user_image.filename == '':
+            return jsonify({
+                'success': False,
+                'message': 'No selected file'
+            })
+
+        if not allowed_file(user_image.filename):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid image format. Please use JPG, JPEG, PNG, or BMP'
+            })
+
+        # Create temporary file
+        temp_user_image = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(user_image.filename))
+        user_image.save(temp_user_image)
+        print(f"Saved user image to: {temp_user_image}")
+
+        # Get product garment image
+        product_id = request.form.get('product_id')
+        garment_image = request.form.get('garment_image')
+        
+        print(f"Product ID: {product_id}")
+        print(f"Garment image: {garment_image}")
+
+        if not product_id or not garment_image:
+            return jsonify({
+                'success': False,
+                'message': 'Missing product information'
+            })
+
+        # Create multipart form data
+        form_data = MultipartEncoder(
+            fields={
+                'task_type': 'async',
+                'person_image': ('person.jpg', open(temp_user_image, 'rb'), 'image/jpeg'),
+                'top_garment': ('garment.jpg', open(garment_image.lstrip('/'), 'rb'), 'image/jpeg'),
+                'bottom_garment': 'null',
+                'resolution': '-1',
+                'restore_face': 'true'
+            }
+        )
+
+        print("Sending request to API.market")
+        headers = {
+            'x-magicapi-key': API_KEY,
+            'Content-Type': form_data.content_type
+        }
+
+        response = requests.post(API_URL, data=form_data, headers=headers)
+        result = response.json()
+        print(f"API Response: {result}")
+
+        if response.status_code == 200:
+            return jsonify({
+                'success': True,
+                'task_id': result.get('task_id'),
+                'result_url': result.get('result_url'),
+                'message': 'Processing complete'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result.get('error_msg', 'API request failed')
+            })
+
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        print(f"Try-on error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        })
+    finally:
+        # Cleanup temporary files
+        if 'temp_user_image' in locals() and os.path.exists(temp_user_image):
+            try:
+                os.remove(temp_user_image)
+                print(f"Cleaned up temporary file: {temp_user_image}")
+            except Exception as e:
+                print(f"Cleanup error: {str(e)}")
+
 
 @app.route('/checkout/<int:product_id>')
 def checkout(product_id):
@@ -805,4 +972,4 @@ def checkout(product_id):
 # Main Execution
 # --------------------------------------
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=True, port=5000)
